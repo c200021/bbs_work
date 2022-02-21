@@ -8,7 +8,9 @@ $_POST['password'] = $_COOKIE['password'];
 $_POST['save'] = 'on';
 }
 
-if (!empty($_POST)) {
+if (!empty($_POST)  && $_SESSION["key"] == $_POST["key"]) {
+    unset( $_SESSION["key"] );
+    
 	// ログインの処理
 	if ($_POST['email'] != '' && $_POST['password'] != '') {
         $email = htmlspecialchars($_POST['email'], ENT_QUOTES, 'UTF-8');
@@ -21,7 +23,7 @@ if (!empty($_POST)) {
             $stmt->execute();
 			$member = $stmt->fetch(PDO::FETCH_ASSOC);
 			
-			if( password_verify($password, $member['password']) ) {
+			if( password_verify($password, $member['password']) && $member['locked'] < 3) {
 				// ログイン成功
 				session_regenerate_id(true); // 現在のセッションIDを新しく生成したものと置き換える
 				                             // セッションハイジャック対策
@@ -33,11 +35,29 @@ if (!empty($_POST)) {
 				    setcookie('email', $_POST['email'], time()+60*60*24*14);
 				    setcookie('password', $_POST['password'], time()+60*60*24*14);
 				}
+				
+				// locked リセット
+				$sql = 'UPDATE members SET locked = :locked WHERE email=:email';
+			    $reset = $dbh->prepare($sql);
+                $reset->bindValue(':email', $email, PDO::PARAM_STR);
+                $reset->bindValue(':locked', 0, PDO::PARAM_STR);
+                $reset->execute();
+				
 				header('Location: index2.php');
 				exit();
             }else{
 				// ログイン認証失敗
-				$error['login'] = 'failed';
+				if(isset($member['locked']) && $member['locked'] >= 3) {
+				    // アカウントロック
+				    $error['login'] = 'locked';
+				}else{
+				    // locked カウントアップ
+				    $sql = 'UPDATE members SET locked = locked +1 WHERE email=:email';
+				    $countup = $dbh->prepare($sql);
+                    $countup->bindValue(':email', $email, PDO::PARAM_STR);
+                    $countup->execute();
+                    $error['login'] = 'failed';
+				}
             } 
         }catch (PDOException $e){
             echo($e->getMessage());
@@ -47,6 +67,7 @@ if (!empty($_POST)) {
 		$error['login'] = 'blank';
 	}
 }
+$_SESSION["key"] = md5(uniqid().mt_rand());
 ?>
 <!DOCTYPE html>
 <html lang="ja">
@@ -71,6 +92,7 @@ if (!empty($_POST)) {
 				<p>&raquo;<a href="input.php">会員登録手続きをする</a></p>
 			</div>
 			<form action="" method="POST">
+			    <input type="hidden" name="key" value="<?php echo htmlspecialchars( $_SESSION["key"], ENT_QUOTES );?>">
 				<dl>
 					<dt>メールアドレス</dt>
 					<dd>
@@ -80,6 +102,9 @@ if (!empty($_POST)) {
 						<?php endif; ?>
 						<?php if ($error['login'] == 'failed'): ?>
 							<p class="error">* ユーザーIDあるいはパスワードに誤りがあります。正しく入力ください。</p>
+						<?php endif; ?>
+						<?php if ($error['login'] == 'locked'): ?>
+							<p class="error">* このアカウントはロックされています。お手数ですが管理者に問い合わせてください。</p>
 						<?php endif; ?>
 					</dd>
 					<dt>パスワード</dt>
